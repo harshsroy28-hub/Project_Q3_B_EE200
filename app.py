@@ -20,10 +20,27 @@ HOP_LENGTH = WINDOW_LENGTH // 4
 SR_RATE = 22050
 
 @st.cache_data
+# def get_constellation_map(audio_bytes):
+#     """
+#     Loads audio from memory bytes and extracts the local peak constellation map.
+#     Cached by Streamlit to keep the app highly responsive.
+#     """
+#     # Load audio directly from memory buffer
+#     y, sr = librosa.load(audio_bytes, sr=SR_RATE)
+#     stft_matrix = librosa.stft(y, n_fft=WINDOW_LENGTH, hop_length=HOP_LENGTH)
+#     stft_db = librosa.amplitude_to_db(np.abs(stft_matrix), ref=np.max)
+    
+#     # 2D Max Filter for local peak detection
+#     neighborhood_size = (20, 20)
+#     local_max = ndimage.maximum_filter(stft_db, size=neighborhood_size) == stft_db
+#     foreground = (stft_db > -45)
+#     detected_peaks = local_max & foreground
+    
+#     freq_indices, time_indices = np.where(detected_peaks)
+#     return time_indices, freq_indices, stft_db
 def get_constellation_map(audio_bytes):
     """
     Loads audio from memory bytes and extracts the local peak constellation map.
-    Cached by Streamlit to keep the app highly responsive.
     """
     # Load audio directly from memory buffer
     y, sr = librosa.load(audio_bytes, sr=SR_RATE)
