@@ -113,9 +113,9 @@ class AudioDatabase:
 
     def identify_query(self, query_bytes):
         """Identifies an uploaded query clip using offset histogram alignment."""
+        # Use librosa to read the file bytes cleanly
         t_idx, f_idx, stft_db = get_constellation_map(query_bytes)
         query_hashes = generate_hashes(t_idx, f_idx)
-        
         matches_found = collections.defaultdict(list)
         for hash_key, q_time_sec in query_hashes:
             if hash_key in self.db:
