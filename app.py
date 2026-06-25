@@ -6,48 +6,28 @@ import matplotlib.pyplot as plt
 import scipy.ndimage as ndimage
 import pandas as pd
 import collections
+import pickle
 import os
 
-# Set page configuration with a neat theme
+# Set up page configuration
 st.set_page_config(page_title="EE200: Audio Fingerprinting App", layout="wide")
 st.title("🎵 Zapptain America - Audio Fingerprinting System")
 st.markdown("### EE200 Course Project: Signals, Systems and Networks")
 
-# --- CORE SIGNAL PROCESSING ENGINE (From Q3A) ---
-
+# --- GLOBAL CONFIGURATIONS ---
 WINDOW_LENGTH = 2048
-HOP_LENGTH = WINDOW_LENGTH // 4
+HOP_LENGTH = 512
 SR_RATE = 22050
 
-@st.cache_data
-# def get_constellation_map(audio_bytes):
-#     """
-#     Loads audio from memory bytes and extracts the local peak constellation map.
-#     Cached by Streamlit to keep the app highly responsive.
-#     """
-#     # Load audio directly from memory buffer
-#     y, sr = librosa.load(audio_bytes, sr=SR_RATE)
-#     stft_matrix = librosa.stft(y, n_fft=WINDOW_LENGTH, hop_length=HOP_LENGTH)
-#     stft_db = librosa.amplitude_to_db(np.abs(stft_matrix), ref=np.max)
-    
-#     # 2D Max Filter for local peak detection
-#     neighborhood_size = (20, 20)
-#     local_max = ndimage.maximum_filter(stft_db, size=neighborhood_size) == stft_db
-#     foreground = (stft_db > -45)
-#     detected_peaks = local_max & foreground
-    
-#     freq_indices, time_indices = np.where(detected_peaks)
-#     return time_indices, freq_indices, stft_db
+# --- HELPER SIGNAL PROCESSING FUNCTIONS ---
 def get_constellation_map(audio_bytes):
     """
     Loads audio from memory bytes and extracts the local peak constellation map.
     """
-    # Load audio directly from memory buffer
     y, sr = librosa.load(audio_bytes, sr=SR_RATE)
     stft_matrix = librosa.stft(y, n_fft=WINDOW_LENGTH, hop_length=HOP_LENGTH)
     stft_db = librosa.amplitude_to_db(np.abs(stft_matrix), ref=np.max)
     
-    # 2D Max Filter for local peak detection
     neighborhood_size = (20, 20)
     local_max = ndimage.maximum_filter(stft_db, size=neighborhood_size) == stft_db
     foreground = (stft_db > -45)
@@ -57,7 +37,9 @@ def get_constellation_map(audio_bytes):
     return time_indices, freq_indices, stft_db
 
 def generate_hashes(time_indices, freq_indices):
-    """Pairs constellation peaks within target zones into distinct hashes."""
+    """
+    Pairs constellation peaks within target zones into distinct hashes.
+    """
     hashes = []
     num_peaks = len(time_indices)
     peaks = sorted(zip(time_indices, freq_indices), key=lambda x: x[0])
@@ -67,13 +49,16 @@ def generate_hashes(time_indices, freq_indices):
         for j in range(i + 1, num_peaks):
             t2, f2 = peaks[j]
             dt = t2 - t1
-            if dt > 30:  # target zone max time gap constraint
+            if dt > 30:
                 break
-            if abs(f2 - f1) <= 8:  # target zone max frequency delta constraint
+            if abs(f2 - f1) <= 8:
                 hash_key = (int(f1), int(f2), int(dt))
                 t1_seconds = t1 * (HOP_LENGTH / SR_RATE)
                 hashes.append((hash_key, t1_seconds))
     return hashes
+
+# --- DATABASE MANAGEMENT CLASS ---
+class AudioDatabase:
 
 # --- DATABASE MANAGEMENT CLASS ---
 
