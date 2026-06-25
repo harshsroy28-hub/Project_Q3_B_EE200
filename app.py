@@ -60,17 +60,59 @@ def generate_hashes(time_indices, freq_indices):
 
 # --- DATABASE MANAGEMENT CLASS ---
 
+# class AudioDatabase:
+#     def __init__(self):
+#         # Maps hash_key -> list of (song_name, t1_seconds)
+#         self.db = collections.defaultdict(list)
+#         self.indexed_songs = set()
+    # --- DATABASE MANAGEMENT CLASS ---
+# class AudioDatabase:
+#     def __init__(self):
+#         # Maps hash_key -> list of (song_name, t1_seconds)
+#         self.db = collections.defaultdict(list)
+#         self.indexed_songs = set()
+#        # self.database_file = "fingerprint_db.pkl" # <-- Define the file name here
+
+#     def index_song(self, audio_path, song_name):
+# --- DATABASE MANAGEMENT CLASS ---
 class AudioDatabase:
     def __init__(self):
         # Maps hash_key -> list of (song_name, t1_seconds)
         self.db = collections.defaultdict(list)
         self.indexed_songs = set()
+        self.database_file = "fingerprint_db.pkl"  # <-- Make sure this is inside __init__
+        self.load_database()                       # <-- Automatically load on startup
 
-    def index_song(self, audio_path, song_name):
+    def load_database(self):
+        """Loads the fingerprint database from the pickle file if it exists."""
+        import pickle
+        import os
+        if os.path.exists(self.database_file):
+            try:
+                with open(self.database_file, "rb") as f:
+                    self.db = pickle.load(f)
+                # Rebuild the indexed songs set based on loaded keys
+                self.indexed_songs = set(
+                    song for songs_list in self.db.values() for song, _ in songs_list
+                )
+            except Exception as e:
+                st.error(f"Error loading database: {e}")
+
+    def save_database(self):
+        """Saves the current fingerprint database to the pickle file."""
+        import pickle
+        try:
+            with open(self.database_file, "wb") as f:
+                pickle.dump(self.db, f)
+        except Exception as e:
+            st.error(f"Error saving database: {e}")
+
+   def index_song(self, audio_path, song_name):
         """Indexes a standard local disk song into the global database."""
         try:
             # Index middle section of the song database tracks to optimize space
             y, sr = librosa.load(audio_path, sr=SR_RATE, offset=30.0, duration=60.0)
+            
             stft_matrix = librosa.stft(y, n_fft=WINDOW_LENGTH, hop_length=HOP_LENGTH)
             stft_db = librosa.amplitude_to_db(np.abs(stft_matrix), ref=np.max)
             
@@ -89,6 +131,7 @@ class AudioDatabase:
             self.indexed_songs.add(song_name)
         except Exception as e:
             st.error(f"Error indexing {song_name}: {e}")
+            self.save_database()
 
     def identify_query(self, query_bytes):
         """Identifies an uploaded query clip using offset histogram alignment."""
