@@ -8,6 +8,7 @@ import pandas as pd
 import collections
 import pickle
 import os
+import io
 
 # Set up page configuration
 st.set_page_config(page_title="EE200: Audio Fingerprinting App", layout="wide")
@@ -21,16 +22,19 @@ SR_RATE = 22050
 
 # --- HELPER SIGNAL PROCESSING FUNCTIONS ---
 def get_constellation_map(audio_bytes):
-    """Loads audio from memory bytes and extracts the local peak constellation map."""
-    y, sr = librosa.load(audio_bytes, sr=SR_RATE)
+    """Loads audio safely from memory bytes and extracts the local peak constellation map."""
+    # FIX: Wrap the bytes in a BytesIO buffer so librosa reads it natively
+    input_stream = io.BytesIO(audio_bytes.read()) if hasattr(audio_bytes, 'read') else io.BytesIO(audio_bytes)
+
+    y, sr = librosa.load(input_stream, sr=SR_RATE)
     stft_matrix = librosa.stft(y, n_fft=WINDOW_LENGTH, hop_length=HOP_LENGTH)
     stft_db = librosa.amplitude_to_db(np.abs(stft_matrix), ref=np.max)
-    
+
     neighborhood_size = (20, 20)
     local_max = ndimage.maximum_filter(stft_db, size=neighborhood_size) == stft_db
     foreground = (stft_db > -45)
     detected_peaks = local_max & foreground
-    
+
     freq_indices, time_indices = np.where(detected_peaks)
     return time_indices, freq_indices, stft_db
 
