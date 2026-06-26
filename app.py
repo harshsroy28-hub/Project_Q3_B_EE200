@@ -60,7 +60,7 @@ class AudioDatabase:
         self.indexed_songs = set()
         self.load_database()
 
-def load_database(self):
+    def load_database(self):
         """Loads the database from file, converting to a defaultdict to prevent KeyErrors."""
         target_file = None
         if os.path.exists("fingerprint_db.pkl"):
@@ -89,7 +89,7 @@ def load_database(self):
             except Exception as e:
                 st.error(f"Error reading database file: {e}")
 
-        # CRITICAL FIX: Convert standard dict to a collections.defaultdict(list)
+        # Convert standard dict to a collections.defaultdict(list) safely
         self.db = collections.defaultdict(list)
         if isinstance(loaded_dict, dict):
             for k, v in loaded_dict.items():
@@ -101,7 +101,7 @@ def load_database(self):
             self.db[mock_hash].append(("Preloaded_Database_Track", 30.0))
             self.indexed_songs.add("Preloaded_Database_Track")
 
-        def identify_query(self, query_bytes):
+    def identify_query(self, query_bytes):
         """Identifies an uploaded query clip using offset histogram alignment safely."""
         t_idx, f_idx, stft_db = get_constellation_map(query_bytes)
         query_hashes = generate_hashes(t_idx, f_idx)
@@ -110,7 +110,6 @@ def load_database(self):
         for hash_key, q_time_sec in query_hashes:
             if hash_key in self.db:
                 for match_item in self.db[hash_key]:
-                    # Defensive check to make sure structural components match expectations
                     if isinstance(match_item, (list, tuple)) and len(match_item) >= 2:
                         db_song_name = str(match_item[0])
                         try:
