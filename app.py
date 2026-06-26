@@ -37,21 +37,26 @@ def get_constellation_map(audio_file):
         if y.ndim > 1:
             y = np.mean(y, axis=1) # Convert to mono
             
-        # Resample using pure scipy logic if sample rates mismatch
         if sr != SR_RATE:
             num_samples = int(len(y) * SR_RATE / sr)
             y = signal.resample(y, num_samples)
     except Exception as e:
         st.error(f"Failed to decode audio file codec: {e}")
-        y = np.zeros(SR_RATE * 5)
+        return np.array([]), np.array([]), np.zeros((1025, 100))
+
+    # CIRCUIT BREAKER 1: Drop execution if file is empty or pure silence to prevent peak explosions
+    if len(y) == 0 or np.max(np.abs(y)) < 1e-4:
+        return np.array([]), np.array([]), np.zeros((1025, 100))
 
     # Compute Short-Time Fourier Transform using Scipy
     frequencies, times, Zxx = signal.stft(y, fs=SR_RATE, nperseg=WINDOW_LENGTH, noverlap=WINDOW_LENGTH - HOP_LENGTH)
     stft_abs = np.abs(Zxx)
-    stft_abs = np.where(stft_abs == 0, 1e-10, stft_abs) # Prevent log10(0) crash
+    
+    if np.max(stft_abs) < 1e-7:
+        return np.array([]), np.array([]), np.zeros_like(stft_abs)
     
     # Convert amplitude to Decibels and normalize
-    stft_db = 20 * np.log10(stft_abs)
+    stft_db = 20 * np.log10(stft_abs + 1e-10)
     stft_db = stft_db - np.max(stft_db)
     
     neighborhood_size = (20, 20)
@@ -66,6 +71,13 @@ def generate_hashes(time_indices, freq_indices):
     """Pairs constellation peaks within target zones into distinct hashes."""
     hashes = []
     num_peaks = len(time_indices)
+    
+    # CIRCUIT BREAKER 2: Hard-cap the peak matrix to block infinite nested routing loops
+    if num_peaks > 2000:
+        time_indices = time_indices[:2000]
+        freq_indices = freq_indices[:2000]
+        num_peaks = 2000
+        
     peaks = sorted(zip(time_indices, freq_indices), key=lambda x: x[0])
     
     for i in range(num_peaks):
@@ -129,6 +141,10 @@ class AudioDatabase:
     def identify_query(self, query_bytes):
         """Identifies an uploaded query clip using offset histogram alignment."""
         t_idx, f_idx, stft_db = get_constellation_map(query_bytes)
+        
+        if len(t_idx) == 0:
+            return "No Match (Silent/Invalid File)", 0, t_idx, f_idx, stft_db, []
+
         query_hashes = generate_hashes(t_idx, f_idx)
         
         matches_found = collections.defaultdict(list)
@@ -207,12 +223,12 @@ with tab1:
             total_frames = spectrogram_db.shape[1]
             total_time = total_frames * (HOP_LENGTH / SR_RATE)
             
-            # Pure Matplotlib Spectrogram rendering
             ax1.imshow(spectrogram_db, origin='lower', aspect='auto', cmap='magma', 
                        extent=[0, total_time, 0, SR_RATE / 2])
             
-            ax1.scatter(t_idx * (HOP_LENGTH / SR_RATE), f_idx * (SR_RATE / WINDOW_LENGTH), 
-                        color='cyan', s=15, alpha=0.6, label="Constellation Peaks")
+            if len(t_idx) > 0:
+                ax1.scatter(t_idx * (HOP_LENGTH / SR_RATE), f_idx * (SR_RATE / WINDOW_LENGTH), 
+                            color='cyan', s=15, alpha=0.6, label="Constellation Peaks")
             ax1.set_xlabel("Time (s)")
             ax1.set_ylabel("Frequency (Hz)")
             ax1.set_ylim(0, SR_RATE / 2)
