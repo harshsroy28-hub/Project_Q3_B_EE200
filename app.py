@@ -141,8 +141,8 @@ class AudioDatabase:
         
         if target_file:
             try:
-                with open(target_file, "rb") as f:
-                    data = pickle.load(f)
+               with open("fingerprint_db.pkl", "rb") as f:
+                   data = pickle.load(f)
                 
                 debug_info = f"File found! Object Type: {type(data)}"
                 
@@ -200,11 +200,6 @@ class AudioDatabase:
         # Output explicit system diagnostics box directly to user
         st.sidebar.markdown("### 🔍 Database Diagnostics")
         st.sidebar.info(debug_info)
-
-        if not self.indexed_songs:
-            mock_hash = (100, 120, 15)
-            self.db[mock_hash].append(("Preloaded_Database_Track", 30.0))
-            self.indexed_songs.add("Preloaded_Database_Track")
 
     def identify_query(self, query_bytes):
         """Identifies an uploaded query clip using offset histogram alignment."""
