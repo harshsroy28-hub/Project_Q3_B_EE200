@@ -85,7 +85,7 @@ def get_constellation_map(audio_file):
     stft_db = 20 * np.log10(np.abs(Zxx) + 1e-10)
     stft_db = stft_db - np.max(stft_db)
     
-    # FIX: Dynamically isolate only the top 1.5% highest energy peaks to prevent visual saturation
+    # Isolate top 1.5% highest energy peaks to prevent visual density saturation
     peak_threshold = np.percentile(stft_db, 98.5)
     
     neighborhood_size = (20, 20)
@@ -129,7 +129,7 @@ class AudioDatabase:
         self.load_database()
 
     def load_database(self):
-        """Loads database from file with structural shape scanning."""
+        """Loads database from file with automated structural layout scanners."""
         target_file = None
         if os.path.exists("fingerprint_db.pkl"):
             target_file = "fingerprint_db.pkl"
@@ -137,32 +137,69 @@ class AudioDatabase:
             target_file = "fingerprint_db"
 
         loaded_dict = {}
+        debug_info = "No fingerprint database file found in repository."
+        
         if target_file:
             try:
                 with open(target_file, "rb") as f:
                     data = pickle.load(f)
                 
+                debug_info = f"File found! Object Type: {type(data)}"
+                
+                # Format Variant 1: Custom instance containing internal .db dictionary
                 if hasattr(data, 'db'):
                     loaded_dict = data.db
-                else:
-                    loaded_dict = data
+                    if hasattr(data, 'indexed_songs') and data.indexed_songs:
+                        self.indexed_songs = set(data.indexed_songs)
                 
-                # RECOVERY SCANNER: Deep search for track names regardless of dictionary structure
-                if isinstance(loaded_dict, dict):
-                    for k, v in loaded_dict.items():
-                        if isinstance(v, list):
-                            for item in v:
-                                if isinstance(item, (list, tuple)) and len(item) > 0:
-                                    self.indexed_songs.add(str(item[0]))
-                                elif isinstance(item, str):
-                                    self.indexed_songs.add(item)
+                # Format Variant 2: Tuple/List packaging layout (db_dict, song_list)
+                elif isinstance(data, (tuple, list)):
+                    debug_info += f" (Sequence of length {len(data)})"
+                    for element in data:
+                        if isinstance(element, dict):
+                            loaded_dict = element
+                        elif isinstance(element, (list, set, tuple)):
+                            self.indexed_songs = set(str(x) for x in element)
+                
+                # Format Variant 3: Direct dictionary structure
+                elif isinstance(data, dict):
+                    loaded_dict = data
+                    debug_info += f" (Dictionary containing {len(data)} entries)"
+                
+                # Deep structural scanner parsing fallback
+                if isinstance(loaded_dict, dict) and len(loaded_dict) > 0:
+                    first_key = next(iter(loaded_dict))
+                    
+                    if isinstance(first_key, str):
+                        for song_name in loaded_dict.keys():
+                            self.indexed_songs.add(str(song_name))
+                    else:
+                        for k, v in loaded_dict.items():
+                            if isinstance(v, (list, tuple, np.ndarray)):
+                                for item in v:
+                                    if isinstance(item, (list, tuple)) and len(item) > 0:
+                                        self.indexed_songs.add(str(item[0]))
+                                    elif isinstance(item, str):
+                                        self.indexed_songs.add(item)
+                            elif isinstance(v, str):
+                                self.indexed_songs.add(v)
             except Exception as e:
-                st.error(f"Error reading database file: {e}")
+                debug_info = f"Failed to parse pickle: {e}"
 
+        # Standardize loaded tracking elements into the required lookup layout
         self.db = collections.defaultdict(list)
         if isinstance(loaded_dict, dict):
             for k, v in loaded_dict.items():
-                self.db[k] = list(v)
+                if isinstance(v, list):
+                    self.db[k] = v
+                elif isinstance(v, (tuple, np.ndarray)):
+                    self.db[k] = list(v)
+                else:
+                    self.db[k] = [v]
+
+        # Output explicit system diagnostics box directly to user
+        st.sidebar.markdown("### 🔍 Database Diagnostics")
+        st.sidebar.info(debug_info)
 
         if not self.indexed_songs:
             mock_hash = (100, 120, 15)
@@ -257,7 +294,7 @@ with tab1:
             
             if len(t_idx) > 0:
                 ax1.scatter(t_idx * (HOP_LENGTH / SR_RATE), f_idx * (SR_RATE / WINDOW_LENGTH), 
-                            color='cyan', s=8, alpha=0.7, label="Constellation Peaks")
+                            color='cyan', s=6, alpha=0.7, label="Constellation Peaks")
             ax1.set_xlabel("Time (s)")
             ax1.set_ylabel("Frequency (Hz)")
             ax1.set_ylim(0, SR_RATE / 2)
