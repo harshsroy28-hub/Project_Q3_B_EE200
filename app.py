@@ -60,34 +60,42 @@ class AudioDatabase:
         self.indexed_songs = set()
         self.load_database()
 
-    def load_database(self):
-        """Loads the database from file, with an automatic fallback if empty."""
+def load_database(self):
+        """Loads the database from file, converting to a defaultdict to prevent KeyErrors."""
         target_file = None
         if os.path.exists("fingerprint_db.pkl"):
             target_file = "fingerprint_db.pkl"
         elif os.path.exists("fingerprint_db"):
             target_file = "fingerprint_db"
 
+        loaded_dict = {}
         if target_file:
             try:
                 with open(target_file, "rb") as f:
                     data = pickle.load(f)
                 
                 if hasattr(data, 'db'):
-                    self.db = data.db
+                    loaded_dict = data.db
                     self.indexed_songs = getattr(data, 'indexed_songs', set())
                 else:
-                    self.db = data
+                    loaded_dict = data
                 
-                if isinstance(self.db, dict):
-                    for hash_key, matches in self.db.items():
+                # Extract track names if any exist in the dictionary
+                if isinstance(loaded_dict, dict):
+                    for hash_key, matches in loaded_dict.items():
                         for item in matches:
                             if isinstance(item, (list, tuple)) and len(item) > 0:
                                 self.indexed_songs.add(item[0])
             except Exception as e:
                 st.error(f"Error reading database file: {e}")
 
-        # Fallback tracking bypass
+        # CRITICAL FIX: Convert standard dict to a collections.defaultdict(list)
+        self.db = collections.defaultdict(list)
+        if isinstance(loaded_dict, dict):
+            for k, v in loaded_dict.items():
+                self.db[k] = list(v)
+
+        # Fallback tracking bypass if database file is missing/empty
         if not self.indexed_songs:
             mock_hash = (100, 120, 15)
             self.db[mock_hash].append(("Preloaded_Database_Track", 30.0))
