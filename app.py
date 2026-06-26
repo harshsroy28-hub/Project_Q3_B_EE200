@@ -1,4 +1,4 @@
-# --- CRITICAL BUGFIX: SMART PATH RESOLUTION MOCK BEFORE ALL IMPORTS ---
+# --- CRITICAL BUGFIX: ROBUST ACTIVE-MEMORY PATH RESOLUTION ---
 import sys
 import types
 import os
@@ -6,14 +6,24 @@ import os
 if 'pkg_resources' not in sys.modules:
     mock_pkg = types.ModuleType('pkg_resources')
     def resource_filename(package, resource):
-        try:
-            import importlib
-            mod = importlib.import_module(package)
-            if hasattr(mod, '__file__'):
+        # Look up directly from active system memory to avoid partial initialization failures
+        if package in sys.modules:
+            mod = sys.modules[package]
+            if hasattr(mod, '__file__') and mod.__file__:
                 return os.path.join(os.path.dirname(mod.__file__), resource)
-        except Exception:
-            pass
+        
+        # Fallback to parent package structure walking if needed
+        parts = package.split('.')
+        for i in range(len(parts), 0, -1):
+            parent_package = '.'.join(parts[:i])
+            if parent_package in sys.modules:
+                mod = sys.modules[parent_package]
+                if hasattr(mod, '__file__') and mod.__file__:
+                    base_dir = os.path.dirname(mod.__file__)
+                    sub_dirs = parts[i:]
+                    return os.path.join(base_dir, *sub_dirs, resource)
         return resource
+        
     mock_pkg.resource_filename = resource_filename
     sys.modules['pkg_resources'] = mock_pkg
 
