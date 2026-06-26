@@ -1,3 +1,11 @@
+# --- CRITICAL BUGFIX: MOCK PACKAGES BEFORE ANY IMPORTS ---
+import sys
+import types
+if 'pkg_resources' not in sys.modules:
+    mock_pkg = types.ModuleType('pkg_resources')
+    mock_pkg.resource_filename = lambda pkg, path: path
+    sys.modules['pkg_resources'] = mock_pkg
+
 import streamlit as st
 import numpy as np
 import librosa
@@ -23,21 +31,19 @@ SR_RATE = 22050
 
 # --- HELPER SIGNAL PROCESSING FUNCTIONS ---
 def get_constellation_map(audio_file):
-    """Loads audio safely from file-like object using a bulletproof fallback stream parser."""
+    """Loads audio safely from file-like object using a bulletproof stream parser."""
     try:
-        # Read file bytes directly
         file_bytes = audio_file.read() if hasattr(audio_file, 'read') else audio_file
-        audio_file.seek(0) if hasattr(audio_file, 'seek') else None
+        if hasattr(audio_file, 'seek'):
+            audio_file.seek(0)
         
-        # Try decoding natively via standard scipy wav reader first
         try:
             sr, y = wavfile.read(io.BytesIO(file_bytes))
             if y.ndim > 1:
-                y = np.mean(y, axis=1)  # Convert to mono
+                y = np.mean(y, axis=1)
             if sr != SR_RATE:
                 y = librosa.resample(y.astype(float), orig_sr=sr, target_sr=SR_RATE)
         except Exception:
-            # Fallback to soundfile engine directly if scipy fails on format
             import soundfile as sf
             y, sr = sf.read(io.BytesIO(file_bytes))
             if y.ndim > 1:
@@ -46,7 +52,6 @@ def get_constellation_map(audio_file):
                 y = librosa.resample(y, orig_sr=sr, target_sr=SR_RATE)
     except Exception as e:
         st.error(f"Failed to decode audio file codec: {e}")
-        # Final emergency dummy fallback array to prevent UI crash
         y = np.zeros(SR_RATE * 5)
 
     stft_matrix = librosa.stft(y, n_fft=WINDOW_LENGTH, hop_length=HOP_LENGTH)
