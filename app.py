@@ -101,7 +101,7 @@ def load_database(self):
             self.db[mock_hash].append(("Preloaded_Database_Track", 30.0))
             self.indexed_songs.add("Preloaded_Database_Track")
 
-   def identify_query(self, query_bytes):
+        def identify_query(self, query_bytes):
         """Identifies an uploaded query clip using offset histogram alignment safely."""
         t_idx, f_idx, stft_db = get_constellation_map(query_bytes)
         query_hashes = generate_hashes(t_idx, f_idx)
