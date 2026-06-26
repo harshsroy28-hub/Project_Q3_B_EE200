@@ -129,65 +129,61 @@ class AudioDatabase:
         self.load_database()
 
     def load_database(self):
-        """Loads database from file with automated structural layout scanners."""
+        """Loads database from file."""
+
         target_file = None
         if os.path.exists("fingerprint_db.pkl"):
             target_file = "fingerprint_db.pkl"
         elif os.path.exists("fingerprint_db"):
             target_file = "fingerprint_db"
-
+    
         loaded_dict = {}
-        debug_info = "No fingerprint database file found in repository."
-        
+        debug_info = "No fingerprint database file found."
+    
         if target_file:
             try:
-               with open("fingerprint_db.pkl", "rb") as f:
-                   data = pickle.load(f)
-                
+                with open(target_file, "rb") as f:
+                    data = pickle.load(f)
+    
                 debug_info = f"File found! Object Type: {type(data)}"
-                
-                # Format Variant 1: Custom instance containing internal .db dictionary
-                if hasattr(data, 'db'):
+    
+                if hasattr(data, "db"):
                     loaded_dict = data.db
-                    if hasattr(data, 'indexed_songs') and data.indexed_songs:
+                    if hasattr(data, "indexed_songs"):
                         self.indexed_songs = set(data.indexed_songs)
-                
-                # Format Variant 2: Tuple/List packaging layout (db_dict, song_list)
+    
                 elif isinstance(data, (tuple, list)):
-                    debug_info += f" (Sequence of length {len(data)})"
+                    debug_info += f" (Sequence length {len(data)})"
                     for element in data:
                         if isinstance(element, dict):
                             loaded_dict = element
                         elif isinstance(element, (list, set, tuple)):
                             self.indexed_songs = set(str(x) for x in element)
-                
-                # Format Variant 3: Direct dictionary structure
+    
                 elif isinstance(data, dict):
                     loaded_dict = data
                     debug_info += f" (Dictionary containing {len(data)} entries)"
-                
-                # Deep structural scanner parsing fallback
+    
                 if isinstance(loaded_dict, dict) and len(loaded_dict) > 0:
                     first_key = next(iter(loaded_dict))
-                    
+    
                     if isinstance(first_key, str):
-                        for song_name in loaded_dict.keys():
+                        for song_name in loaded_dict:
                             self.indexed_songs.add(str(song_name))
                     else:
-                        for k, v in loaded_dict.items():
+                        for _, v in loaded_dict.items():
                             if isinstance(v, (list, tuple, np.ndarray)):
                                 for item in v:
                                     if isinstance(item, (list, tuple)) and len(item) > 0:
                                         self.indexed_songs.add(str(item[0]))
                                     elif isinstance(item, str):
                                         self.indexed_songs.add(item)
-                            elif isinstance(v, str):
-                                self.indexed_songs.add(v)
+    
             except Exception as e:
                 debug_info = f"Failed to parse pickle: {e}"
-
-        # Standardize loaded tracking elements into the required lookup layout
+    
         self.db = collections.defaultdict(list)
+    
         if isinstance(loaded_dict, dict):
             for k, v in loaded_dict.items():
                 if isinstance(v, list):
@@ -196,55 +192,55 @@ class AudioDatabase:
                     self.db[k] = list(v)
                 else:
                     self.db[k] = [v]
-
-        # Output explicit system diagnostics box directly to user
+    
         st.sidebar.markdown("### 🔍 Database Diagnostics")
         st.sidebar.info(debug_info)
 
-    def identify_query(self, query_bytes):
-        """Identifies an uploaded query clip using offset histogram alignment."""
-        t_idx, f_idx, stft_db = get_constellation_map(query_bytes)
-        
-        if len(t_idx) == 0:
-            return "No Match (Silent/Invalid File)", 0, t_idx, f_idx, stft_db, []
-
-        query_hashes = generate_hashes(t_idx, f_idx)
-        
-        matches_found = collections.defaultdict(list)
-        for hash_key, q_time_sec in query_hashes:
-            if hash_key in self.db:
-                for match_item in self.db[hash_key]:
-                    if isinstance(match_item, (list, tuple)) and len(match_item) >= 2:
-                        db_song_name = str(match_item[0])
-                        try:
-                            db_time_sec = float(match_item[1])
-                            offset = db_time_sec - float(q_time_sec)
-                            matches_found[db_song_name].append(offset)
-                        except (ValueError, TypeError):
-                            continue
-        
-        best_song = "Unknown / No Match"
-        max_alignment_score = 0
-        best_offsets_list = []
-        
-        for song_name, offsets in matches_found.items():
-            if len(offsets) == 0:
-                continue
-            try:
-                counts, _ = np.histogram(offsets, bins=np.arange(min(offsets)-1, max(offsets)+1, 0.5))
-                highest_bin_peak = np.max(counts)
-                
-                if highest_bin_peak > max_alignment_score:
-                    max_alignment_score = highest_bin_peak
-                    best_song = song_name
-                    best_offsets_list = offsets
-            except Exception:
-                continue
-                
-        return best_song, max_alignment_score, t_idx, f_idx, stft_db, best_offsets_list
+        def identify_query(self, query_bytes):
+            """Identifies an uploaded query clip using offset histogram alignment."""
+            t_idx, f_idx, stft_db = get_constellation_map(query_bytes)
+            
+            if len(t_idx) == 0:
+                return "No Match (Silent/Invalid File)", 0, t_idx, f_idx, stft_db, []
+    
+            query_hashes = generate_hashes(t_idx, f_idx)
+            
+            matches_found = collections.defaultdict(list)
+            for hash_key, q_time_sec in query_hashes:
+                if hash_key in self.db:
+                    for match_item in self.db[hash_key]:
+                        if isinstance(match_item, (list, tuple)) and len(match_item) >= 2:
+                            db_song_name = str(match_item[0])
+                            try:
+                                db_time_sec = float(match_item[1])
+                                offset = db_time_sec - float(q_time_sec)
+                                matches_found[db_song_name].append(offset)
+                            except (ValueError, TypeError):
+                                continue
+            
+            best_song = "Unknown / No Match"
+            max_alignment_score = 0
+            best_offsets_list = []
+            
+            for song_name, offsets in matches_found.items():
+                if len(offsets) == 0:
+                    continue
+                try:
+                    counts, _ = np.histogram(offsets, bins=np.arange(min(offsets)-1, max(offsets)+1, 0.5))
+                    highest_bin_peak = np.max(counts)
+                    
+                    if highest_bin_peak > max_alignment_score:
+                        max_alignment_score = highest_bin_peak
+                        best_song = song_name
+                        best_offsets_list = offsets
+                except Exception:
+                    continue
+                    
+            return best_song, max_alignment_score, t_idx, f_idx, stft_db, best_offsets_list
 
 # Force a fresh database read on every single refresh to break the cache lock
-st.session_state.audio_db = AudioDatabase()
+if "audio_db" not in st.session_state:
+    st.session_state.audio_db = AudioDatabase()
 
 # --- SIDEBAR DATABASE CONTROL PANEL ---
 st.sidebar.header("🗄️ Song Database Management")
