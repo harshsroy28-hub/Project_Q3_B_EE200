@@ -1,47 +1,14 @@
-# --- CRITICAL BUGFIX: ROBUST ACTIVE-MEMORY PATH RESOLUTION ---
-import sys
-import types
-import os
-
-if 'pkg_resources' not in sys.modules:
-    mock_pkg = types.ModuleType('pkg_resources')
-    def resource_filename(package, resource):
-        if package in sys.modules:
-            mod = sys.modules[package]
-            if hasattr(mod, '__file__') and mod.__file__:
-                base_dir = os.path.dirname(mod.__file__)
-                if os.path.exists(os.path.join(base_dir, resource)):
-                    return os.path.join(base_dir, resource)
-        try:
-            parts = package.split('.')
-            if parts[0] in sys.modules:
-                root_mod = sys.modules[parts[0]]
-                if hasattr(root_mod, '__file__') and root_mod.__file__:
-                    current_path = os.path.dirname(root_mod.__file__)
-                    for part in parts[1:]:
-                        test_path = os.path.join(current_path, part)
-                        if os.path.isdir(test_path):
-                            current_path = test_path
-                        else:
-                            break
-                    return os.path.join(current_path, resource)
-        except Exception:
-            pass
-        return resource
-        
-    mock_pkg.resource_filename = resource_filename
-    sys.modules['pkg_resources'] = mock_pkg
-
 import streamlit as st
 import numpy as np
-import librosa
-import librosa.display
 import matplotlib.pyplot as plt
 import scipy.ndimage as ndimage
 import scipy.io.wavfile as wavfile
+import scipy.signal as signal
+import soundfile as sf
 import pandas as pd
 import collections
 import pickle
+import os
 import io
 
 # Set up page configuration
@@ -56,7 +23,7 @@ SR_RATE = 22050
 
 # --- HELPER SIGNAL PROCESSING FUNCTIONS ---
 def get_constellation_map(audio_file):
-    """Loads audio safely from file-like object using a bulletproof stream parser."""
+    """Loads audio safely using soundfile and computes STFT purely using Scipy."""
     try:
         file_bytes = audio_file.read() if hasattr(audio_file, 'read') else audio_file
         if hasattr(audio_file, 'seek'):
@@ -64,23 +31,28 @@ def get_constellation_map(audio_file):
         
         try:
             sr, y = wavfile.read(io.BytesIO(file_bytes))
-            if y.ndim > 1:
-                y = np.mean(y, axis=1)
-            if sr != SR_RATE:
-                y = librosa.resample(y.astype(float), orig_sr=sr, target_sr=SR_RATE)
         except Exception:
-            import soundfile as sf
             y, sr = sf.read(io.BytesIO(file_bytes))
-            if y.ndim > 1:
-                y = np.mean(y, axis=1)
-            if sr != SR_RATE:
-                y = librosa.resample(y, orig_sr=sr, target_sr=SR_RATE)
+            
+        if y.ndim > 1:
+            y = np.mean(y, axis=1) # Convert to mono
+            
+        # Resample using pure scipy logic if sample rates mismatch
+        if sr != SR_RATE:
+            num_samples = int(len(y) * SR_RATE / sr)
+            y = signal.resample(y, num_samples)
     except Exception as e:
         st.error(f"Failed to decode audio file codec: {e}")
         y = np.zeros(SR_RATE * 5)
 
-    stft_matrix = librosa.stft(y, n_fft=WINDOW_LENGTH, hop_length=HOP_LENGTH)
-    stft_db = librosa.amplitude_to_db(np.abs(stft_matrix), ref=np.max)
+    # Compute Short-Time Fourier Transform using Scipy
+    frequencies, times, Zxx = signal.stft(y, fs=SR_RATE, nperseg=WINDOW_LENGTH, noverlap=WINDOW_LENGTH - HOP_LENGTH)
+    stft_abs = np.abs(Zxx)
+    stft_abs = np.where(stft_abs == 0, 1e-10, stft_abs) # Prevent log10(0) crash
+    
+    # Convert amplitude to Decibels and normalize
+    stft_db = 20 * np.log10(stft_abs)
+    stft_db = stft_db - np.max(stft_db)
     
     neighborhood_size = (20, 20)
     local_max = ndimage.maximum_filter(stft_db, size=neighborhood_size) == stft_db
@@ -117,7 +89,7 @@ class AudioDatabase:
         self.load_database()
 
     def load_database(self):
-        """Loads the database from file, converting to a defaultdict to prevent KeyErrors."""
+        """Loads the database from file, converting to a defaultdict safely."""
         target_file = None
         if os.path.exists("fingerprint_db.pkl"):
             target_file = "fingerprint_db.pkl"
@@ -155,7 +127,7 @@ class AudioDatabase:
             self.indexed_songs.add("Preloaded_Database_Track")
 
     def identify_query(self, query_bytes):
-        """Identifies an uploaded query clip using offset histogram alignment safely."""
+        """Identifies an uploaded query clip using offset histogram alignment."""
         t_idx, f_idx, stft_db = get_constellation_map(query_bytes)
         query_hashes = generate_hashes(t_idx, f_idx)
         
@@ -231,10 +203,19 @@ with tab1:
         with col1:
             st.markdown("#### 1. Computed Spectrogram & Extracted Constellation")
             fig1, ax1 = plt.subplots(figsize=(10, 5))
-            librosa.display.specshow(spectrogram_db, sr=SR_RATE, hop_length=HOP_LENGTH, x_axis='time', y_axis='linear', cmap='magma', ax=ax1)
-            ax1.scatter(t_idx * (HOP_LENGTH / SR_RATE), f_idx * (SR_RATE / WINDOW_LENGTH), color='cyan', s=15, alpha=0.6, label="Constellation Peaks")
+            
+            total_frames = spectrogram_db.shape[1]
+            total_time = total_frames * (HOP_LENGTH / SR_RATE)
+            
+            # Pure Matplotlib Spectrogram rendering
+            ax1.imshow(spectrogram_db, origin='lower', aspect='auto', cmap='magma', 
+                       extent=[0, total_time, 0, SR_RATE / 2])
+            
+            ax1.scatter(t_idx * (HOP_LENGTH / SR_RATE), f_idx * (SR_RATE / WINDOW_LENGTH), 
+                        color='cyan', s=15, alpha=0.6, label="Constellation Peaks")
             ax1.set_xlabel("Time (s)")
             ax1.set_ylabel("Frequency (Hz)")
+            ax1.set_ylim(0, SR_RATE / 2)
             ax1.legend()
             st.pyplot(fig1)
             
