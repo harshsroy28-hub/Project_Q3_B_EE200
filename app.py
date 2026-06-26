@@ -248,9 +248,8 @@ class AudioDatabase:
                 
         return best_song, max_alignment_score, t_idx, f_idx, stft_db, best_offsets_list
 
-# Initialize session state database
-if 'audio_db' not in st.session_state:
-    st.session_state.audio_db = AudioDatabase()
+# Force a fresh database read on every single refresh to break the cache lock
+st.session_state.audio_db = AudioDatabase()
 
 # --- SIDEBAR DATABASE CONTROL PANEL ---
 st.sidebar.header("🗄️ Song Database Management")
