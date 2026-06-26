@@ -1,9 +1,20 @@
-# --- CRITICAL BUGFIX: MOCK PACKAGES BEFORE ANY IMPORTS ---
+# --- CRITICAL BUGFIX: SMART PATH RESOLUTION MOCK BEFORE ALL IMPORTS ---
 import sys
 import types
+import os
+
 if 'pkg_resources' not in sys.modules:
     mock_pkg = types.ModuleType('pkg_resources')
-    mock_pkg.resource_filename = lambda pkg, path: path
+    def resource_filename(package, resource):
+        try:
+            import importlib
+            mod = importlib.import_module(package)
+            if hasattr(mod, '__file__'):
+                return os.path.join(os.path.dirname(mod.__file__), resource)
+        except Exception:
+            pass
+        return resource
+    mock_pkg.resource_filename = resource_filename
     sys.modules['pkg_resources'] = mock_pkg
 
 import streamlit as st
@@ -16,7 +27,6 @@ import scipy.io.wavfile as wavfile
 import pandas as pd
 import collections
 import pickle
-import os
 import io
 
 # Set up page configuration
