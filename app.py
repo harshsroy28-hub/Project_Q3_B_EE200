@@ -60,7 +60,7 @@ class AudioDatabase:
         self.indexed_songs = set()
         self.load_database()
 
-    def load_database(self):
+  def load_database(self):
         """Loads the database, checking both extension variations."""
         target_file = None
         if os.path.exists("fingerprint_db.pkl"):
@@ -71,12 +71,22 @@ class AudioDatabase:
         if target_file:
             try:
                 with open(target_file, "rb") as f:
-                    self.db = pickle.load(f)
+                    data = pickle.load(f)
                 
-                # Rebuild indexed songs list
-                for hash_key in self.db:
-                    for song_name, _ in self.db[hash_key]:
-                        self.indexed_songs.add(song_name)
+                # Check if the pickled object is the AudioDatabase class instance itself
+                if hasattr(data, 'db'):
+                    self.db = data.db
+                    self.indexed_songs = getattr(data, 'indexed_songs', set())
+                else:
+                    self.db = data
+                
+                # Rebuild indexed songs list fallback
+                if not self.indexed_songs and isinstance(self.db, dict):
+                    for hash_key, matches in self.db.items():
+                        for item in matches:
+                            if isinstance(item, (list, tuple)) and len(item) > 0:
+                                self.indexed_songs.add(item[0])
+                                
             except Exception as e:
                 st.error(f"Error reading database file: {e}")
 
