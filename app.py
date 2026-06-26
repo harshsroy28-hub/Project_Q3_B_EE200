@@ -6,22 +6,27 @@ import os
 if 'pkg_resources' not in sys.modules:
     mock_pkg = types.ModuleType('pkg_resources')
     def resource_filename(package, resource):
-        # Look up directly from active system memory to avoid partial initialization failures
         if package in sys.modules:
             mod = sys.modules[package]
             if hasattr(mod, '__file__') and mod.__file__:
-                return os.path.join(os.path.dirname(mod.__file__), resource)
-        
-        # Fallback to parent package structure walking if needed
-        parts = package.split('.')
-        for i in range(len(parts), 0, -1):
-            parent_package = '.'.join(parts[:i])
-            if parent_package in sys.modules:
-                mod = sys.modules[parent_package]
-                if hasattr(mod, '__file__') and mod.__file__:
-                    base_dir = os.path.dirname(mod.__file__)
-                    sub_dirs = parts[i:]
-                    return os.path.join(base_dir, *sub_dirs, resource)
+                base_dir = os.path.dirname(mod.__file__)
+                if os.path.exists(os.path.join(base_dir, resource)):
+                    return os.path.join(base_dir, resource)
+        try:
+            parts = package.split('.')
+            if parts[0] in sys.modules:
+                root_mod = sys.modules[parts[0]]
+                if hasattr(root_mod, '__file__') and root_mod.__file__:
+                    current_path = os.path.dirname(root_mod.__file__)
+                    for part in parts[1:]:
+                        test_path = os.path.join(current_path, part)
+                        if os.path.isdir(test_path):
+                            current_path = test_path
+                        else:
+                            break
+                    return os.path.join(current_path, resource)
+        except Exception:
+            pass
         return resource
         
     mock_pkg.resource_filename = resource_filename
