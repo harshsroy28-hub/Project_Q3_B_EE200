@@ -101,17 +101,24 @@ def load_database(self):
             self.db[mock_hash].append(("Preloaded_Database_Track", 30.0))
             self.indexed_songs.add("Preloaded_Database_Track")
 
-    def identify_query(self, query_bytes):
-        """Identifies an uploaded query clip using offset histogram alignment."""
+   def identify_query(self, query_bytes):
+        """Identifies an uploaded query clip using offset histogram alignment safely."""
         t_idx, f_idx, stft_db = get_constellation_map(query_bytes)
         query_hashes = generate_hashes(t_idx, f_idx)
         
         matches_found = collections.defaultdict(list)
         for hash_key, q_time_sec in query_hashes:
             if hash_key in self.db:
-                for db_song_name, db_time_sec in self.db[hash_key]:
-                    offset = db_time_sec - q_time_sec
-                    matches_found[db_song_name].append(offset)
+                for match_item in self.db[hash_key]:
+                    # Defensive check to make sure structural components match expectations
+                    if isinstance(match_item, (list, tuple)) and len(match_item) >= 2:
+                        db_song_name = str(match_item[0])
+                        try:
+                            db_time_sec = float(match_item[1])
+                            offset = db_time_sec - float(q_time_sec)
+                            matches_found[db_song_name].append(offset)
+                        except (ValueError, TypeError):
+                            continue
         
         best_song = "Unknown / No Match"
         max_alignment_score = 0
@@ -120,13 +127,16 @@ def load_database(self):
         for song_name, offsets in matches_found.items():
             if len(offsets) == 0:
                 continue
-            counts, _ = np.histogram(offsets, bins=np.arange(min(offsets)-1, max(offsets)+1, 0.5))
-            highest_bin_peak = np.max(counts)
-            
-            if highest_bin_peak > max_alignment_score:
-                max_alignment_score = highest_bin_peak
-                best_song = song_name
-                best_offsets_list = offsets
+            try:
+                counts, _ = np.histogram(offsets, bins=np.arange(min(offsets)-1, max(offsets)+1, 0.5))
+                highest_bin_peak = np.max(counts)
+                
+                if highest_bin_peak > max_alignment_score:
+                    max_alignment_score = highest_bin_peak
+                    best_song = song_name
+                    best_offsets_list = offsets
+            except Exception:
+                continue
                 
         return best_song, max_alignment_score, t_idx, f_idx, stft_db, best_offsets_list
 
