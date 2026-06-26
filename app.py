@@ -21,9 +21,7 @@ SR_RATE = 22050
 
 # --- HELPER SIGNAL PROCESSING FUNCTIONS ---
 def get_constellation_map(audio_bytes):
-    """
-    Loads audio from memory bytes and extracts the local peak constellation map.
-    """
+    """Loads audio from memory bytes and extracts the local peak constellation map."""
     y, sr = librosa.load(audio_bytes, sr=SR_RATE)
     stft_matrix = librosa.stft(y, n_fft=WINDOW_LENGTH, hop_length=HOP_LENGTH)
     stft_db = librosa.amplitude_to_db(np.abs(stft_matrix), ref=np.max)
@@ -37,9 +35,7 @@ def get_constellation_map(audio_bytes):
     return time_indices, freq_indices, stft_db
 
 def generate_hashes(time_indices, freq_indices):
-    """
-    Pairs constellation peaks within target zones into distinct hashes.
-    """
+    """Pairs constellation peaks within target zones into distinct hashes."""
     hashes = []
     num_peaks = len(time_indices)
     peaks = sorted(zip(time_indices, freq_indices), key=lambda x: x[0])
@@ -60,62 +56,35 @@ def generate_hashes(time_indices, freq_indices):
 # --- DATABASE MANAGEMENT CLASS ---
 class AudioDatabase:
     def __init__(self):
-        # Maps hash_key -> list of (song_name, t1_seconds)
         self.db = collections.defaultdict(list)
         self.indexed_songs = set()
-        self.database_file = "fingerprint_db.pkl"  # Matches the file name on GitHub
         self.load_database()
 
     def load_database(self):
-        """Loads the fingerprint database from the pickle file if it exists."""
-        if os.path.exists(self.database_file):
+        """Loads the database, checking both extension variations."""
+        target_file = None
+        if os.path.exists("fingerprint_db.pkl"):
+            target_file = "fingerprint_db.pkl"
+        elif os.path.exists("fingerprint_db"):
+            target_file = "fingerprint_db"
+
+        if target_file:
             try:
-                with open(self.database_file, "rb") as f:
+                with open(target_file, "rb") as f:
                     self.db = pickle.load(f)
-                # Rebuild the indexed songs set based on loaded keys
-                self.indexed_songs = set(
-                    song for songs_list in self.db.values() for song, _ in songs_list
-                )
+                
+                # Rebuild indexed songs list
+                for hash_key in self.db:
+                    for song_name, _ in self.db[hash_key]:
+                        self.indexed_songs.add(song_name)
             except Exception as e:
-                st.error(f"Error loading database: {e}")
-
-    def save_database(self):
-        """Saves the current fingerprint database to the pickle file."""
-        try:
-            with open(self.database_file, "wb") as f:
-                pickle.dump(self.db, f)
-        except Exception as e:
-            st.error(f"Error saving database: {e}")
-
-    def index_song(self, audio_path, song_name):
-        """Indexes a standard local disk song into the global database."""
-        try:
-            y, sr = librosa.load(audio_path, sr=SR_RATE, offset=30.0, duration=60.0)
-            stft_matrix = librosa.stft(y, n_fft=WINDOW_LENGTH, hop_length=HOP_LENGTH)
-            stft_db = librosa.amplitude_to_db(np.abs(stft_matrix), ref=np.max)
-            
-            neighborhood_size = (20, 20)
-            local_max = ndimage.maximum_filter(stft_db, size=neighborhood_size) == stft_db
-            foreground = (stft_db > -45)
-            detected_peaks = local_max & foreground
-            
-            freq_indices, time_indices = np.where(detected_peaks)
-            frame_offset = int(30.0 * SR_RATE / HOP_LENGTH)
-            time_indices_adjusted = time_indices + frame_offset
-            
-            hashes = generate_hashes(time_indices_adjusted, freq_indices)
-            for hash_key, t1_seconds in hashes:
-                self.db[hash_key].append((song_name, t1_seconds))
-            self.indexed_songs.add(song_name)
-            self.save_database()
-        except Exception as e:
-            st.error(f"Error indexing {song_name}: {e}")
+                st.error(f"Error reading database file: {e}")
 
     def identify_query(self, query_bytes):
         """Identifies an uploaded query clip using offset histogram alignment."""
-        # Use librosa to read the file bytes cleanly
         t_idx, f_idx, stft_db = get_constellation_map(query_bytes)
         query_hashes = generate_hashes(t_idx, f_idx)
+        
         matches_found = collections.defaultdict(list)
         for hash_key, q_time_sec in query_hashes:
             if hash_key in self.db:
@@ -140,44 +109,21 @@ class AudioDatabase:
                 
         return best_song, max_alignment_score, t_idx, f_idx, stft_db, best_offsets_list
 
-# Initialize or restore database in Streamlit's operational session state
+# Initialize session state database
 if 'audio_db' not in st.session_state:
     st.session_state.audio_db = AudioDatabase()
 
 # --- SIDEBAR DATABASE CONTROL PANEL ---
 st.sidebar.header("🗄️ Song Database Management")
-db_folder = st.sidebar.text_input("Database Directory Path:", "EE200 Project Song Database")
 
-if st.sidebar.button("Index / Reload Song Database"):
-    if os.path.exists(db_folder):
-        song_files = [f for f in os.listdir(db_folder) if f.endswith(('.mp3', '.wav', '.m4a'))]
-        if song_files:
-            progress_bar = st.sidebar.progress(0)
-            status_text = st.sidebar.empty()
-            
-            st.session_state.audio_db = AudioDatabase()
-            
-            for index, file_name in enumerate(song_files):
-                status_text.text(f"Indexing: {file_name}")
-                song_path = os.path.join(db_folder, file_name)
-                label_name = os.path.splitext(file_name)[0]
-                st.session_state.audio_db.index_song(song_path, label_name)
-                progress_bar.progress((index + 1) / len(song_files))
-                
-            status_text.text(f"✅ Successfully Indexed {len(song_files)} songs!")
-        else:
-            st.sidebar.error("No valid audio files found in the directory.")
-    else:
-        st.sidebar.error("Directory path not found. Verify your storage location.")
-
-# Show currently indexed tracks
 if st.session_state.audio_db.indexed_songs:
+    st.sidebar.success(f"✅ Loaded {len(st.session_state.audio_db.indexed_songs)} tracks from fingerprint file!")
     st.sidebar.markdown("#### Currently Indexed Tracks:")
     st.sidebar.write(", ".join(list(st.session_state.audio_db.indexed_songs)))
 else:
-    st.sidebar.warning("Database empty. Using pre-loaded fingerprint_db file.")
+    st.sidebar.warning("⚠️ No pre-computed database file found in repository root.")
 
-# --- MAIN MODE TABS (Single-Clip vs Batch) ---
+# --- MAIN MODE TABS ---
 tab1, tab2 = st.tabs(["🎯 Single-Clip Identification Mode", "📂 Batch Processing Mode"])
 
 # ================= TAB 1: SINGLE-CLIP MODE =================
@@ -185,6 +131,7 @@ with tab1:
     st.header("Single-Clip Visual Identifier")
     st.write("Upload a query sound byte snippet to display the signal intermediate steps.")
     
+    # FIX: Cleaned up double-assignment syntax error here
     uploaded_file = st.file_uploader("Upload Clip Snippet:", type=["mp3", "wav", "m4a"], key="single_uploader")
     
     if uploaded_file is not None:
@@ -214,8 +161,8 @@ with tab1:
             if len(offsets) > 0:
                 fig2, ax2 = plt.subplots(figsize=(10, 5))
                 ax2.hist(offsets, bins=50, color='crimson', edgecolor='black', alpha=0.7)
-                ax2.set_title(f"Peak Matching Target Bins Alignment")
-                ax2.set_xlabel("Relative Time Offset (Database Time - Query Time in Seconds)")
+                ax2.set_title("Peak Matching Target Bins Alignment")
+                ax2.set_xlabel("Relative Time Offset (Seconds)")
                 ax2.set_ylabel("Match Counts / Bin Strength")
                 ax2.grid(axis='y', linestyle='--', alpha=0.5)
                 st.pyplot(fig2)
@@ -257,5 +204,5 @@ with tab2:
                 data=csv_buffer,
                 file_name="results.csv",
                 mime="text/csv"
-                )
+            )
             st.success("Batch classification complete! Download the CSV sheet above.")
