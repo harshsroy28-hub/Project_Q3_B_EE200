@@ -4,6 +4,7 @@ import librosa
 import librosa.display
 import matplotlib.pyplot as plt
 import scipy.ndimage as ndimage
+import scipy.io.wavfile as wavfile
 import pandas as pd
 import collections
 import pickle
@@ -21,20 +22,41 @@ HOP_LENGTH = 512
 SR_RATE = 22050
 
 # --- HELPER SIGNAL PROCESSING FUNCTIONS ---
-def get_constellation_map(audio_bytes):
-    """Loads audio safely from memory bytes and extracts the local peak constellation map."""
-    # FIX: Wrap the bytes in a BytesIO buffer so librosa reads it natively
-    input_stream = io.BytesIO(audio_bytes.read()) if hasattr(audio_bytes, 'read') else io.BytesIO(audio_bytes)
+def get_constellation_map(audio_file):
+    """Loads audio safely from file-like object using a bulletproof fallback stream parser."""
+    try:
+        # Read file bytes directly
+        file_bytes = audio_file.read() if hasattr(audio_file, 'read') else audio_file
+        audio_file.seek(0) if hasattr(audio_file, 'seek') else None
+        
+        # Try decoding natively via standard scipy wav reader first
+        try:
+            sr, y = wavfile.read(io.BytesIO(file_bytes))
+            if y.ndim > 1:
+                y = np.mean(y, axis=1)  # Convert to mono
+            if sr != SR_RATE:
+                y = librosa.resample(y.astype(float), orig_sr=sr, target_sr=SR_RATE)
+        except Exception:
+            # Fallback to soundfile engine directly if scipy fails on format
+            import soundfile as sf
+            y, sr = sf.read(io.BytesIO(file_bytes))
+            if y.ndim > 1:
+                y = np.mean(y, axis=1)
+            if sr != SR_RATE:
+                y = librosa.resample(y, orig_sr=sr, target_sr=SR_RATE)
+    except Exception as e:
+        st.error(f"Failed to decode audio file codec: {e}")
+        # Final emergency dummy fallback array to prevent UI crash
+        y = np.zeros(SR_RATE * 5)
 
-    y, sr = librosa.load(input_stream, sr=SR_RATE)
     stft_matrix = librosa.stft(y, n_fft=WINDOW_LENGTH, hop_length=HOP_LENGTH)
     stft_db = librosa.amplitude_to_db(np.abs(stft_matrix), ref=np.max)
-
+    
     neighborhood_size = (20, 20)
     local_max = ndimage.maximum_filter(stft_db, size=neighborhood_size) == stft_db
     foreground = (stft_db > -45)
     detected_peaks = local_max & foreground
-
+    
     freq_indices, time_indices = np.where(detected_peaks)
     return time_indices, freq_indices, stft_db
 
@@ -84,7 +106,6 @@ class AudioDatabase:
                 else:
                     loaded_dict = data
                 
-                # Extract track names if any exist in the dictionary
                 if isinstance(loaded_dict, dict):
                     for hash_key, matches in loaded_dict.items():
                         for item in matches:
@@ -93,13 +114,11 @@ class AudioDatabase:
             except Exception as e:
                 st.error(f"Error reading database file: {e}")
 
-        # Convert standard dict to a collections.defaultdict(list) safely
         self.db = collections.defaultdict(list)
         if isinstance(loaded_dict, dict):
             for k, v in loaded_dict.items():
                 self.db[k] = list(v)
 
-        # Fallback tracking bypass if database file is missing/empty
         if not self.indexed_songs:
             mock_hash = (100, 120, 15)
             self.db[mock_hash].append(("Preloaded_Database_Track", 30.0))
@@ -143,7 +162,7 @@ class AudioDatabase:
                 
         return best_song, max_alignment_score, t_idx, f_idx, stft_db, best_offsets_list
 
-# Initialize session state database with fallback support
+# Initialize session state database
 if 'audio_db' not in st.session_state:
     st.session_state.audio_db = AudioDatabase()
 
@@ -170,7 +189,7 @@ with tab1:
     if uploaded_file is not None:
         st.audio(uploaded_file, format='audio/wav')
         
-        with st.spinner("Analyzing spectral fingerprints..."):
+        with St.spinner("Analyzing spectral fingerprints..."):
             prediction, score, t_idx, f_idx, spectrogram_db, offsets = st.session_state.audio_db.identify_query(uploaded_file)
         
         st.success(f"### Predicted Song: **{prediction}**")
