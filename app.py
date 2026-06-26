@@ -1,3 +1,37 @@
+# --- CRITICAL BUGFIX: ROBUST ACTIVE-MEMORY PATH RESOLUTION ---
+import sys
+import types
+import os
+
+if 'pkg_resources' not in sys.modules:
+    mock_pkg = types.ModuleType('pkg_resources')
+    def resource_filename(package, resource):
+        if package in sys.modules:
+            mod = sys.modules[package]
+            if hasattr(mod, '__file__') and mod.__file__:
+                base_dir = os.path.dirname(mod.__file__)
+                if os.path.exists(os.path.join(base_dir, resource)):
+                    return os.path.join(base_dir, resource)
+        try:
+            parts = package.split('.')
+            if parts[0] in sys.modules:
+                root_mod = sys.modules[parts[0]]
+                if hasattr(root_mod, '__file__') and root_mod.__file__:
+                    current_path = os.path.dirname(root_mod.__file__)
+                    for part in parts[1:]:
+                        test_path = os.path.join(current_path, part)
+                        if os.path.isdir(test_path):
+                            current_path = test_path
+                        else:
+                            break
+                    return os.path.join(current_path, resource)
+        except Exception:
+            pass
+        return resource
+        
+    mock_pkg.resource_filename = resource_filename
+    sys.modules['pkg_resources'] = mock_pkg
+
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,7 +42,6 @@ import soundfile as sf
 import pandas as pd
 import collections
 import pickle
-import os
 import io
 
 # Set up page configuration
@@ -23,7 +56,7 @@ SR_RATE = 22050
 
 # --- HELPER SIGNAL PROCESSING FUNCTIONS ---
 def get_constellation_map(audio_file):
-    """Loads audio safely using soundfile and computes STFT purely using Scipy."""
+    """Loads audio safely and extracts clean local peaks using dynamic percentile thresholding."""
     try:
         file_bytes = audio_file.read() if hasattr(audio_file, 'read') else audio_file
         if hasattr(audio_file, 'seek'):
@@ -35,33 +68,29 @@ def get_constellation_map(audio_file):
             y, sr = sf.read(io.BytesIO(file_bytes))
             
         if y.ndim > 1:
-            y = np.mean(y, axis=1) # Convert to mono
+            y = np.mean(y, axis=1)
             
         if sr != SR_RATE:
             num_samples = int(len(y) * SR_RATE / sr)
             y = signal.resample(y, num_samples)
     except Exception as e:
         st.error(f"Failed to decode audio file codec: {e}")
-        return np.array([]), np.array([]), np.zeros((1025, 100))
+        y = np.zeros(SR_RATE * 5)
 
-    # CIRCUIT BREAKER 1: Drop execution if file is empty or pure silence to prevent peak explosions
     if len(y) == 0 or np.max(np.abs(y)) < 1e-4:
         return np.array([]), np.array([]), np.zeros((1025, 100))
 
-    # Compute Short-Time Fourier Transform using Scipy
+    # Compute STFT
     frequencies, times, Zxx = signal.stft(y, fs=SR_RATE, nperseg=WINDOW_LENGTH, noverlap=WINDOW_LENGTH - HOP_LENGTH)
-    stft_abs = np.abs(Zxx)
-    
-    if np.max(stft_abs) < 1e-7:
-        return np.array([]), np.array([]), np.zeros_like(stft_abs)
-    
-    # Convert amplitude to Decibels and normalize
-    stft_db = 20 * np.log10(stft_abs + 1e-10)
+    stft_db = 20 * np.log10(np.abs(Zxx) + 1e-10)
     stft_db = stft_db - np.max(stft_db)
+    
+    # FIX: Dynamically isolate only the top 1.5% highest energy peaks to prevent visual saturation
+    peak_threshold = np.percentile(stft_db, 98.5)
     
     neighborhood_size = (20, 20)
     local_max = ndimage.maximum_filter(stft_db, size=neighborhood_size) == stft_db
-    foreground = (stft_db > -45)
+    foreground = (stft_db > peak_threshold)
     detected_peaks = local_max & foreground
     
     freq_indices, time_indices = np.where(detected_peaks)
@@ -72,7 +101,6 @@ def generate_hashes(time_indices, freq_indices):
     hashes = []
     num_peaks = len(time_indices)
     
-    # CIRCUIT BREAKER 2: Hard-cap the peak matrix to block infinite nested routing loops
     if num_peaks > 2000:
         time_indices = time_indices[:2000]
         freq_indices = freq_indices[:2000]
@@ -101,7 +129,7 @@ class AudioDatabase:
         self.load_database()
 
     def load_database(self):
-        """Loads the database from file, converting to a defaultdict safely."""
+        """Loads database from file with structural shape scanning."""
         target_file = None
         if os.path.exists("fingerprint_db.pkl"):
             target_file = "fingerprint_db.pkl"
@@ -116,15 +144,18 @@ class AudioDatabase:
                 
                 if hasattr(data, 'db'):
                     loaded_dict = data.db
-                    self.indexed_songs = getattr(data, 'indexed_songs', set())
                 else:
                     loaded_dict = data
                 
+                # RECOVERY SCANNER: Deep search for track names regardless of dictionary structure
                 if isinstance(loaded_dict, dict):
-                    for hash_key, matches in loaded_dict.items():
-                        for item in matches:
-                            if isinstance(item, (list, tuple)) and len(item) > 0:
-                                self.indexed_songs.add(item[0])
+                    for k, v in loaded_dict.items():
+                        if isinstance(v, list):
+                            for item in v:
+                                if isinstance(item, (list, tuple)) and len(item) > 0:
+                                    self.indexed_songs.add(str(item[0]))
+                                elif isinstance(item, str):
+                                    self.indexed_songs.add(item)
             except Exception as e:
                 st.error(f"Error reading database file: {e}")
 
@@ -191,8 +222,6 @@ if st.session_state.audio_db.indexed_songs:
     st.sidebar.success(f"✅ Loaded {len(st.session_state.audio_db.indexed_songs)} tracks from fingerprint file!")
     st.sidebar.markdown("#### Currently Indexed Tracks:")
     st.sidebar.write(", ".join(list(st.session_state.audio_db.indexed_songs)))
-else:
-    st.sidebar.warning("⚠️ No pre-computed database file found.")
 
 # --- MAIN MODE TABS ---
 tab1, tab2 = st.tabs(["🎯 Single-Clip Identification Mode", "📂 Batch Processing Mode"])
@@ -228,7 +257,7 @@ with tab1:
             
             if len(t_idx) > 0:
                 ax1.scatter(t_idx * (HOP_LENGTH / SR_RATE), f_idx * (SR_RATE / WINDOW_LENGTH), 
-                            color='cyan', s=15, alpha=0.6, label="Constellation Peaks")
+                            color='cyan', s=8, alpha=0.7, label="Constellation Peaks")
             ax1.set_xlabel("Time (s)")
             ax1.set_ylabel("Frequency (Hz)")
             ax1.set_ylim(0, SR_RATE / 2)
