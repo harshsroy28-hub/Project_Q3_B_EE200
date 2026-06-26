@@ -63,7 +63,7 @@ class AudioDatabase:
         # Maps hash_key -> list of (song_name, t1_seconds)
         self.db = collections.defaultdict(list)
         self.indexed_songs = set()
-        self.database_file = "fingerprint_db"  # Matches the file name on GitHub
+        self.database_file = "fingerprint_db.pkl"  # Matches the file name on GitHub
         self.load_database()
 
     def load_database(self):
