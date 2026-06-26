@@ -189,7 +189,7 @@ with tab1:
     if uploaded_file is not None:
         st.audio(uploaded_file, format='audio/wav')
         
-        with St.spinner("Analyzing spectral fingerprints..."):
+        with st.spinner("Analyzing spectral fingerprints..."):
             prediction, score, t_idx, f_idx, spectrogram_db, offsets = st.session_state.audio_db.identify_query(uploaded_file)
         
         st.success(f"### Predicted Song: **{prediction}**")
